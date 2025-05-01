@@ -1,0 +1,39 @@
+{
+    "list users": {
+        "type": "api_request",
+        "steps": [
+            {
+                "id": "confirm",
+                "bot": "Would you like to see the list of users?",
+                "expect": [
+                    "yes",
+                    "no"
+                ],
+                "responses": {
+                    "yes": "Fetching users...",
+                    "no": "Okay, cancelled. If you need anything else, just ask!"
+                },
+                "store_response": true
+            },
+            {
+                "id": "execute",
+                "bot": "Fetching users...",
+                "api": {
+                    "url": "http://backend-v8.test/users",
+                    "method": "POST"
+                },
+                "response_format": {
+                    "success_message": "Here are the users:\n{users_list}",
+                    "error_message": "Sorry, I couldn't fetch the users. Please try again later.",
+                    "format_rules": {
+                        "users_list": {
+                            "template": " Nom: {contact_nom}\n  Prenom: {contact_prenom}\n   Email: {email}\n   Phone: {telephone}\n   Company: {contact_raison_sociale}\n",
+                            "join_with": "\n"
+                        }
+                    }
+                },
+                "is_final": true
+            }
+        ]
+    }
+}

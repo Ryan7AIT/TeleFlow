@@ -1,0 +1,8 @@
+python-telegram-bot
+thefuzz
+requests
+pydantic
+loguru
+python-dotenv
+faster-whisper
+ffmpeg-python

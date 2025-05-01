@@ -1,0 +1,58 @@
+{
+    "hello": {
+        "response": "Hey there!",
+        "type": "simple"
+    },
+    "how are you": {
+        "response": "I'm good, thanks!",
+        "type": "simple"
+    },
+    "create user": {
+        "type": "conversation",
+        "steps": [
+            {
+                "id": "name",
+                "bot": "Let's create a new user! What is the user's name?",
+                "store_response": true
+            },
+            {
+                "id": "email",
+                "bot": "Great! Now, what's their email address?",
+                "store_response": true
+            },
+            {
+                "id": "age",
+                "bot": "How old is the user?",
+                "store_response": true
+            },
+            {
+                "id": "role",
+                "bot": "What is their role?",
+                "expect": [
+                    "admin",
+                    "user",
+                    "moderator"
+                ],
+                "responses": {
+                    "admin": "Admin role selected",
+                    "user": "Regular user role selected",
+                    "moderator": "Moderator role selected"
+                },
+                "store_response": true
+            },
+            {
+                "id": "confirm",
+                "bot": "Here's the user summary:\n{summary}\nWould you like to create this user?",
+                "expect": [
+                    "yes",
+                    "no"
+                ],
+                "responses": {
+                    "yes": "Creating user...\nUser has been created successfully!",
+                    "no": "User creation cancelled. Starting over."
+                },
+                "is_final": true
+            }
+        ]
+    }
+}
