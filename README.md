@@ -132,6 +132,12 @@ Users can authenticate using the `/login` command, which:
 }
 ```
 
+### Session Expiration Handling (CSRF 419)
+If a user's session expires (CSRF token mismatch, error 419) during an API request, the bot will:
+- Log out the user and remove their session from `auth_mapping.json`
+- Notify the user: "Your session has expired (CSRF token mismatch). Please type /login to login again."
+- Require the user to re-authenticate with /login before using API commands again
+
 ## Workflow
 
 1. **Bot Initialization**
@@ -266,3 +272,6 @@ python main.py
    - Verify voice recognition accuracy
    - Test conversation flows
    - Ensure proper error handling
+
+### API Integration (Error Handling)
+- If an API request returns a 419 CSRF token mismatch, the bot will automatically log out the user and prompt them to /login again.

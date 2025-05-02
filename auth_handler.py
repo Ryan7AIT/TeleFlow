@@ -55,14 +55,18 @@ class AuthHandler:
                 data={"email": username, "password": password},
                 timeout=10
             )
-            # Try to extract _token from response JSON
+            # Try to extract _token and success from response JSON
             current_token = None
+            success = False
             try:
                 resp_json = resp.json()
                 current_token = resp_json.get("_token")
+                success = resp_json.get("success", False)
             except Exception:
                 current_token = None
-            if resp.status_code == 200 and "XSRF-TOKEN" in session.cookies and "laravel_session" in session.cookies:
+                success = False
+            # Only treat as successful login if status is 200, success is True, and required cookies exist
+            if resp.status_code == 200 and success and "XSRF-TOKEN" in session.cookies and "laravel_session" in session.cookies:
                 self.auth_data["telegram_users"][str(telegram_id)] = {
                     "system_username": username,
                     "system_password": password,

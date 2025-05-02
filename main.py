@@ -1,3 +1,5 @@
+import os
+from dotenv import load_dotenv
 from typing import Final
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
@@ -5,8 +7,9 @@ from message_handler import CustomMessageHandler
 from state import user_states, ConversationState, load_commands, commands
 from auth_handler import AuthHandler
 
-TOKEN: Final = "7755700567:AAEg5DIxHx_KYSsH12Fm-4hhRxwOdOqizUA"
-BOT_USERNAME: Final = "@MEASTRO_SCHOOL"
+load_dotenv()
+TOKEN: Final = os.getenv("TELEGRAM_BOT_TOKEN")
+BOT_USERNAME: Final = os.getenv("TELEGRAM_BOT_USERNAME")
 
 # Initialize auth handler
 auth_handler = AuthHandler()

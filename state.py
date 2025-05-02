@@ -20,6 +20,7 @@ class ConversationState:
         self.command_key = command_key
         self.current_step = 0
         self.stored_responses = {}
+        self.responses = self.stored_responses  # Alias for compatibility
 
     def get_current_step(self):
         return commands[self.command_key]["steps"][self.current_step]
@@ -28,6 +29,7 @@ class ConversationState:
         current_step = self.get_current_step()
         if current_step.get("store_response"):
             self.stored_responses[current_step["id"]] = response
+            self.responses[current_step["id"]] = response  # Keep both in sync
 
     def get_summary(self):
         return "\n".join([f"{k}: {v}" for k, v in self.stored_responses.items()]) 

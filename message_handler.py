@@ -101,6 +101,7 @@ class CustomMessageHandler:
         
         for command in self.commands.keys():
             ratio = fuzz.ratio(processed_text, command)
+            # ratio = fuzz.token_set_ratio(processed_text, command) //TODO: add this instead of just ration
             if ratio > highest_ratio and ratio >= 80:  
                 highest_ratio = ratio
                 best_match = command
@@ -131,7 +132,7 @@ class CustomMessageHandler:
             )
         return None
         
-    async def _handle_api_request(self, step: dict, telegram_id: str) -> Tuple[str, Dict[str, Any]]:
+    async def _handle_api_request(self, step: dict, telegram_id: str, chat_id: int) -> Tuple[str, Dict[str, Any]]:
         """Handle API requests defined in the command steps, including user cookies and CSRF for Laravel."""
         api_config = step["api"]
         payload = api_config.get("payload", {})
@@ -148,13 +149,17 @@ class CustomMessageHandler:
         headers = dict(api_config.get("headers", {}))
         headers["Accept"] = "application/json"
         
+        # Get the user's stored responses from the conversation state
+        state = user_states.get(chat_id)
+        if state:
+            user_data = state.responses  # This should be a dict of {step_id: user_value}
+            # Replace placeholders in the payload
+            payload = {k: v.format(**user_data) if isinstance(v, str) else v for k, v in payload.items()}
+        
         try:
             if api_config["method"].upper() == "GET":
                 resp = session.get(api_config["url"], params=payload, headers=headers, timeout=10)
             else:
-                payload = api_config.get("payload", {})
-                if not isinstance(payload, dict):
-                    payload = {}
                 token = self.auth_handler.get_user_token(telegram_id)
                 if token:
                     payload["_token"] = token
@@ -162,6 +167,10 @@ class CustomMessageHandler:
             if resp.status_code == 200:
                 data = resp.json()
                 return self._format_api_response(data, step["response_format"])
+            elif resp.status_code == 419:
+                # CSRF token mismatch/session expired: log out user and notify
+                self.auth_handler.logout_user(telegram_id)
+                return ("Your session has expired (CSRF token mismatch). Please type /login to login again.", None)
             else:
                 logger.error(f"API error {resp.status_code}: {resp.text}")
                 return step['response_format']['error_message'], None
@@ -179,6 +188,7 @@ class CustomMessageHandler:
         Args:
             data: The raw data returned from the API (usually a dict, sometimes with a 'data' key containing a list).
             format_config: The formatting configuration from the command step, including templates and messages.
+            
 
         Returns:
             A tuple of (formatted_message, None). If formatting fails, returns (error_message, None).
@@ -192,17 +202,22 @@ class CustomMessageHandler:
                 items = data.get("data") if isinstance(data, dict) and "data" in data else data
 
                 if isinstance(items, list):
-                    # If items is a list, format each item using the provided template
-                    formatted_items = []
-                    for item in items:
-                        # Use the template string and fill in values from the item dict
-                        formatted_items.append(rules["template"].format(**item))
-                    # Join all formatted items using the specified join string (e.g., newline)
-                    formatted_parts[key] = rules["join_with"].join(formatted_items)
-                else:
-                    # If items is not a list, just format it directly
+                    if not items:
+                        # If the list is empty, use the message or error_message
+                        formatted_parts[key] = data.get("message") or format_config.get("error_message", "No data returned.")
+                    else:
+                        formatted_items = []
+                        for item in items:
+                            if isinstance(item, dict):
+                                formatted_items.append(rules["template"].format(**item))
+                            else:
+                                formatted_items.append(str(item))
+                        formatted_parts[key] = rules["join_with"].join(formatted_items)
+                elif isinstance(items, dict):
                     formatted_parts[key] = rules["template"].format(**items)
-            
+                else:
+                    # Fallback: just use the message or string representation
+                    formatted_parts[key] = data.get("message") or str(items)
             # Insert the formatted parts into the success message template
             return format_config["success_message"].format(**formatted_parts), None
         except Exception as e:
@@ -294,7 +309,7 @@ class CustomMessageHandler:
         if next_step:
             # 4.1 If it's an API step, handle it immediately
             if "api" in next_step:
-                response, keyboard = await self._handle_api_request(next_step, telegram_id)
+                response, keyboard = await self._handle_api_request(next_step, telegram_id, chat_id)
                 if "is_final" in next_step:
                     del user_states[chat_id]
                 return response, keyboard

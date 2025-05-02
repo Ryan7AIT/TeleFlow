@@ -3,28 +3,18 @@
         "type": "conversation",
         "steps": [
             {
-                "id": "name",
-                "bot": "Please enter the client's full name:",
+                "id": "client_designation",
+                "bot": "Please enter the client's designation:",
                 "store_response": true
             },
             {
-                "id": "email",
-                "bot": "Please enter the client's email address:",
+                "id": "contact_nom",
+                "bot": "Please enter the client's name:",
                 "store_response": true
             },
             {
-                "id": "phone",
-                "bot": "Please enter the client's phone number:",
-                "store_response": true
-            },
-            {
-                "id": "address",
-                "bot": "Please enter the client's address:",
-                "store_response": true
-            },
-            {
-                "id": "company",
-                "bot": "Please enter the client's company name:",
+                "id": "client_code",
+                "bot": "Please enter the client's code:",
                 "store_response": true
             },
             {
@@ -54,11 +44,9 @@
                     "5"
                 ],
                 "goto": {
-                    "1": "name",
-                    "2": "email",
-                    "3": "phone",
-                    "4": "address",
-                    "5": "company"
+                    "1": "client_designation",
+                    "2": "contact_nom",
+                    "3": "client_code"
                 }
             },
             {
@@ -66,19 +54,17 @@
                 "bot": "Adding client to the system...",
                 "api": {
                     "method": "POST",
-                    "url": "http://backend-v8.test/clients",
+                    "url": "http://backend-v8.test/ventes/addClient",
                     "payload": {
-                        "name": "{name}",
-                        "email": "{email}",
-                        "phone": "{phone}",
-                        "address": "{address}",
-                        "company": "{company}"
+                        "client_designation": "{client_designation}",
+                        "contact_nom": "{contact_nom}",
+                        "client_code": "{client_code}"
                     }
                 },
                 "response_format": {
                     "format_rules": {
                         "client": {
-                            "template": "Client: {name} ({email})",
+                            "template": "Client: {contact_nom}",
                             "join_with": "\n"
                         }
                     },
