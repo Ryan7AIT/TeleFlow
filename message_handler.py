@@ -29,13 +29,21 @@ class CustomMessageHandler:
         # Initialize the sentence transformer model
         self.transformer_model = SentenceTransformer('distiluse-base-multilingual-cased-v2')
         
-        # Precompute embeddings for all commands (once at initialization)
+        # Precompute embeddings for all commands and their samples
         self.command_embeddings = []
         self.command_keys = []
-        for command_key in self.commands.keys():
+        for command_key, command_data in self.commands.items():
+            # Encode the command key
             embedding = self.transformer_model.encode(command_key, convert_to_tensor=True)
             self.command_embeddings.append(embedding)
             self.command_keys.append(command_key)
+            
+            # Encode the samples
+            if "samples" in command_data:
+                for sample in command_data["samples"]:
+                    sample_embedding = self.transformer_model.encode(sample, convert_to_tensor=True)
+                    self.command_embeddings.append(sample_embedding)
+                    self.command_keys.append(command_key)
         
         # Initialize logger service
         self.log_service = LoggerService()
@@ -96,41 +104,23 @@ class CustomMessageHandler:
         if chat_type == "group":
             if self.bot_username in text:
                 new_text = text.replace(self.bot_username, "").strip()
-                response, keyboard = await self._handle_response(new_text, chat_id, telegram_id)
+                response, keyboard = await self._handle_response(new_text, chat_id, telegram_id, 
+                                                            message_type="text",
+                                                            chat_type=chat_type,
+                                                            username=username)
             else:
                 return
         else:
-            response, keyboard = await self._handle_response(text, chat_id, telegram_id)
+            response, keyboard = await self._handle_response(text, chat_id, telegram_id,
+                                                         message_type="text",
+                                                         chat_type=chat_type,
+                                                         username=username)
         
-        # Calculate processing time
-        processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
-            
         logger.info(f"Bot response: {response}")
         await update.message.reply_text(response, reply_markup=keyboard)
         
-        # Log the interaction with all available data
-        conversation_state = None
-        if chat_id in user_states:
-            state = user_states[chat_id]
-            conversation_state = {
-                "command": state.command_key,
-                "step": state.current_step,
-                "responses": state.responses
-            }
-        
-        self.log_service.log_interaction(
-            user_id=telegram_id,
-            username=username,
-            chat_id=chat_id,
-            chat_type=chat_type,
-            message_type="text",
-            user_message=text,
-            bot_response=response,
-            command_matched=user_states[chat_id].command_key if chat_id in user_states else None,
-            processing_time=processing_time,
-            is_in_conversation=chat_id in user_states,
-            conversation_state=conversation_state
-        )
+        # Note: We removed the logging here to avoid double logging
+        # The logging is now handled in the _handle_response method
         
     async def _handle_voice_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process voice messages using Faster Whisper."""
@@ -164,47 +154,24 @@ class CustomMessageHandler:
             logger.info(f"Transcribed voice message: {transcribed_text}")
             
             # Process the transcribed text
-            response, keyboard = await self._handle_response(transcribed_text, chat_id, telegram_id)
+            response, keyboard = await self._handle_response(transcribed_text, chat_id, telegram_id, 
+                                                          message_type="voice", 
+                                                          chat_type=chat_type,
+                                                          username=username,
+                                                          custom_data={
+                                                              "voice_duration": voice_duration,
+                                                              "transcription_info": {
+                                                                  "language": detected_language,
+                                                                  "language_probability": info.language_probability
+                                                              }
+                                                          },
+                                                          detected_language=detected_language)
             
-            # Calculate processing time
-            processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+            # Send the response
+            await update.message.reply_text(response, reply_markup=keyboard)
             
-            await update.message.reply_text(
-                f"🎤 Transcribed: {transcribed_text}\n\n{response}",
-                reply_markup=keyboard
-            )
-            
-            # Log the voice interaction with all available data
-            conversation_state = None
-            if chat_id in user_states:
-                state = user_states[chat_id]
-                conversation_state = {
-                    "command": state.command_key,
-                    "step": state.current_step,
-                    "responses": state.responses
-                }
-            
-            self.log_service.log_interaction(
-                user_id=telegram_id,
-                username=username,
-                chat_id=chat_id,
-                chat_type=chat_type,
-                message_type="voice",
-                user_message=transcribed_text,
-                bot_response=response,
-                command_matched=user_states[chat_id].command_key if chat_id in user_states else None,
-                processing_time=processing_time,
-                is_in_conversation=chat_id in user_states,
-                conversation_state=conversation_state,
-                language=detected_language,
-                custom_data={
-                    "voice_duration": voice_duration,
-                    "transcription_info": {
-                        "language": detected_language,
-                        "language_probability": info.language_probability
-                    }
-                }
-            )
+            # Note: We removed the logging here to avoid double logging
+            # The logging is now handled in the _handle_response method with additional voice parameters
             
         except Exception as e:
             error_message = f"Error processing voice message: {str(e)}"
@@ -225,84 +192,145 @@ class CustomMessageHandler:
                 }
             )
             
-    async def _handle_response(self, text: str, chat_id: int, telegram_id: str) -> Tuple[str, Optional[ReplyKeyboardMarkup]]:
-        """Process text responses with fuzzy matching for commands."""
+    async def _handle_response(self, text: str, chat_id: int, telegram_id: str, message_type: str = "text", custom_data: Optional[Dict[str, Any]] = None, detected_language: Optional[str] = None, chat_type: Optional[str] = None, username: Optional[str] = None) -> Tuple[str, Optional[ReplyKeyboardMarkup]]:
+        """Process text responses with semantic matching for commands.
+        
+        Args:
+            text: The text message to process
+            chat_id: The chat ID
+            telegram_id: The user's telegram ID
+            message_type: Type of message ("text" or "voice")
+            custom_data: Additional data to include in logging
+            detected_language: Detected language for voice messages
+            chat_type: The chat type
+            username: The username of the user
+        """
+        if custom_data is None:
+            custom_data = {}
+            
         start_time = time.time()
         processed_text = text.lower()
         
         # If user is in conversation, handle as before
         if chat_id in user_states:
             response, keyboard = await self._handle_conversation_state(chat_id, processed_text, telegram_id)
+            
+            # Get conversation state for logging
+            state = user_states[chat_id]
+            conversation_state = {
+                "command": state.command_key,
+                "step": state.current_step,
+                "responses": state.responses
+            }
+            
+            # Log the interaction
+            self.log_service.log_interaction(
+                user_id=telegram_id,
+                username=username,
+                chat_id=chat_id,
+                chat_type=chat_type,
+                message_type=message_type,
+                user_message=text,
+                bot_response=response,
+                command_matched=state.command_key,
+                processing_time=(time.time() - start_time) * 1000,
+                is_in_conversation=True,
+                conversation_state=conversation_state,
+                language=detected_language,
+                custom_data=custom_data
+            )
+            
             return response, keyboard
             
-        # Try to find the best matching command using a combination of semantic and fuzzy matching
+        # Try to find the best matching command using semantic matching
         best_match = None
         highest_score = 0
         match_method = None
         cleaned_text = self._clean_user_input(processed_text)
         
-        # First try semantic matching with SentenceTransformer
+        # Semantic matching with SentenceTransformer
         text_embedding = self.transformer_model.encode(cleaned_text, convert_to_tensor=True)
         
-        # Calculate semantic similarity score for each command
-        semantic_scores = {}
+        # Calculate semantic similarity score for each command and its samples
         for emb, cmd in zip(self.command_embeddings, self.command_keys):
             semantic_score = util.cos_sim(text_embedding, emb).item()
-            semantic_scores[cmd] = semantic_score
             
-            # If the semantic score is very high, we can just use this
-            if semantic_score > 0.8:
+            if semantic_score > highest_score:
                 highest_score = semantic_score
                 best_match = cmd
                 match_method = "semantic"
-                
-        # If we don't have a high confidence match, combine with fuzzy matching
-        if not best_match or highest_score < 0.8:
-            for command in self.commands.keys():
-                # Calculate a combined score (70% semantic + 30% fuzzy)
-                fuzzy_score = fuzz.ratio(processed_text, command) / 100.0  # Normalize to 0-1
-                semantic_score = semantic_scores.get(command, 0)
-                
-                combined_score = (0.7 * semantic_score) + (0.3 * fuzzy_score)
-                
-                if combined_score > highest_score and combined_score >= 0.65:  # Lower threshold for combined score
-                    highest_score = combined_score
-                    best_match = command
-                    match_method = "combined"
-                
+        
         # Calculate processing time for matching
         matching_time = (time.time() - start_time) * 1000  # ms
                 
-        if best_match:
+        if best_match and highest_score > 0.5:  # Set a minimum threshold for matching
             command_data = self.commands[best_match]
             if command_data["type"] == "simple":
+                # Log the successful match
+                self.log_service.log_interaction(
+                    user_id=telegram_id,
+                    username=username,
+                    chat_id=chat_id,
+                    chat_type=chat_type,
+                    message_type=message_type,
+                    user_message=text,
+                    bot_response=command_data["response"],
+                    command_matched=best_match,
+                    match_score=highest_score,
+                    match_method=match_method,
+                    processing_time=matching_time,
+                    is_in_conversation=False,
+                    language=detected_language,
+                    custom_data=custom_data
+                )
                 return command_data["response"], None
-            elif command_data["type"] == "conversation":
+            elif command_data["type"] in ("conversation", "api_request"):
                 user_states[chat_id] = ConversationState(best_match)
                 first_step = command_data["steps"][0]
                 keyboard = self._create_keyboard(first_step)
-                return first_step["bot"], keyboard
-            elif command_data["type"] == "api_request":
-                user_states[chat_id] = ConversationState(best_match)
-                first_step = command_data["steps"][0]
-                keyboard = self._create_keyboard(first_step)
+                
+                # Log the successful match
+                self.log_service.log_interaction(
+                    user_id=telegram_id,
+                    username=username,
+                    chat_id=chat_id,
+                    chat_type=chat_type,
+                    message_type=message_type,
+                    user_message=text,
+                    bot_response=first_step["bot"],
+                    command_matched=best_match,
+                    match_score=highest_score,
+                    match_method=match_method,
+                    processing_time=matching_time,
+                    is_in_conversation=True,
+                    conversation_state={"command": best_match, "step": 0},
+                    language=detected_language,
+                    custom_data=custom_data
+                )
                 return first_step["bot"], keyboard
 
-        # Log the match attempt (even if unsuccessful)
+        # No match was found or score was below threshold
+        default_response = "I don't understand what you said. Could you try again with different wording?"
+        
+        # Log the failed match attempt
         self.log_service.log_interaction(
             user_id=telegram_id,
+            username=username,
             chat_id=chat_id,
-            message_type="text",
+            chat_type=chat_type,
+            message_type=message_type,
             user_message=text,
-            bot_response="I don't understand what you said.",
-            command_matched=best_match,
-            match_score=highest_score,
+            bot_response=default_response,
+            command_matched=best_match if highest_score > 0 else None,
+            match_score=highest_score if highest_score > 0 else None,
             match_method=match_method,
             processing_time=matching_time,
-            is_in_conversation=False
+            is_in_conversation=False,
+            language=detected_language,
+            custom_data=custom_data
         )
                 
-        return "I don't understand what you said.", None
+        return default_response, None
         
     def _create_keyboard(self, step: dict) -> Optional[ReplyKeyboardMarkup]:
         """Create a keyboard markup if the step has expected responses."""
@@ -449,7 +477,7 @@ class CustomMessageHandler:
                     break
 
         # 3.2 Handle responses (like confirmation yes/no)
-        # TODO: siech 3.1 with 3.2
+        # TODO: switch 3.1 with 3.2
         elif "responses" in current_step:
             if text in current_step["responses"]:
                 response_text = current_step["responses"][text]

@@ -14,7 +14,7 @@ BOT_USERNAME: Final = os.getenv("TELEGRAM_BOT_USERNAME")
 # Initialize auth handler
 auth_handler = AuthHandler()
 
-# Login conversation states (0,1)
+# `Login`` conversation states (0,1)
 USERNAME, PASSWORD = range(2)
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -115,5 +115,5 @@ if __name__ == "__main__":
     app.add_error_handler(error)
 
     print("Polling...")
-    app.run_polling(poll_interval=1)
+    app.run_polling(poll_interval=3)
 

@@ -1,6 +1,11 @@
 {
     "insert_client": {
         "type": "conversation",
+        "samples": [
+            "add a new client",
+            "register client",
+            "create client profile"
+        ],
         "steps": [
             {
                 "id": "client_designation",

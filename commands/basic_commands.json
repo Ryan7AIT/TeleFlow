@@ -1,7 +1,15 @@
 {
     "hello": {
         "response": "Hey there!",
-        "type": "simple"
+        "type": "simple",
+        "samples": [
+            "hello",
+            "hi",
+            "hey",
+            "good morning",
+            "good afternoon",
+            "greetings"
+        ]
     },
     "how are you": {
         "response": "I'm good, thanks!",
