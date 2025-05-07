@@ -6,10 +6,14 @@ from thefuzz import fuzz
 from faster_whisper import WhisperModel
 import tempfile
 import logging
+import time
 from state import user_states, ConversationState, commands
 from auth_handler import AuthHandler
 import requests
 from telegram.constants import ChatAction
+import re
+from sentence_transformers import SentenceTransformer, util
+from logger_service import LoggerService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -22,14 +26,62 @@ class CustomMessageHandler:
         self.whisper_model = WhisperModel("small", device="cpu", compute_type="int8")
         self.auth_handler = auth_handler
         
+        # Initialize the sentence transformer model
+        self.transformer_model = SentenceTransformer('distiluse-base-multilingual-cased-v2')
+        
+        # Precompute embeddings for all commands (once at initialization)
+        self.command_embeddings = []
+        self.command_keys = []
+        for command_key in self.commands.keys():
+            embedding = self.transformer_model.encode(command_key, convert_to_tensor=True)
+            self.command_embeddings.append(embedding)
+            self.command_keys.append(command_key)
+        
+        # Initialize logger service
+        self.log_service = LoggerService()
+            
+    def _clean_user_input(self, text: str) -> str:
+        """Clean up user input by removing common phrases."""
+        remove_patterns = [
+            # English
+            r"what would you like to do\??",
+            r"how can i help you.*",
+            r"please",
+            r"^i(?:'d)? like to",
+            r"^can you",
+            r"^i want to",
+            
+            # Add more patterns as needed for your use case
+        ]
+        
+        for pattern in remove_patterns:
+            text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip()
+        return text
+        
     async def process_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process incoming messages (text or voice) and generate appropriate responses."""
         chat_id = update.message.chat.id
         telegram_id = str(update.effective_user.id)
+        chat_type = update.message.chat.type
+        username = update.effective_user.username
+        
+        start_time = time.time()
+        
         if not self.auth_handler.is_user_logged_in(telegram_id):
             await update.message.reply_text("Please type /login to login before using the bot.")
+            
+            # Log the unauthorized access attempt
+            self.log_service.log_interaction(
+                user_id=telegram_id,
+                username=username,
+                chat_id=chat_id,
+                chat_type=chat_type,
+                user_message=update.message.text if update.message.text else None,
+                bot_response="Please type /login to login before using the bot.",
+                is_in_conversation=False,
+                custom_data={"auth_status": "unauthorized"}
+            )
             return
-        message_type = update.message.chat.type
         
         # Handle voice messages
         if update.message.voice:
@@ -38,10 +90,10 @@ class CustomMessageHandler:
             
         # Handle text messages
         text = update.message.text
-        logger.info(f'User ({chat_id}) in {message_type}: "{text}"')
+        logger.info(f'User ({chat_id}) in {chat_type}: "{text}"')
         
         # if the bot is in a group chat remove the tag from the message
-        if message_type == "group":
+        if chat_type == "group":
             if self.bot_username in text:
                 new_text = text.replace(self.bot_username, "").strip()
                 response, keyboard = await self._handle_response(new_text, chat_id, telegram_id)
@@ -49,25 +101,62 @@ class CustomMessageHandler:
                 return
         else:
             response, keyboard = await self._handle_response(text, chat_id, telegram_id)
+        
+        # Calculate processing time
+        processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
             
         logger.info(f"Bot response: {response}")
         await update.message.reply_text(response, reply_markup=keyboard)
         
+        # Log the interaction with all available data
+        conversation_state = None
+        if chat_id in user_states:
+            state = user_states[chat_id]
+            conversation_state = {
+                "command": state.command_key,
+                "step": state.current_step,
+                "responses": state.responses
+            }
+        
+        self.log_service.log_interaction(
+            user_id=telegram_id,
+            username=username,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            message_type="text",
+            user_message=text,
+            bot_response=response,
+            command_matched=user_states[chat_id].command_key if chat_id in user_states else None,
+            processing_time=processing_time,
+            is_in_conversation=chat_id in user_states,
+            conversation_state=conversation_state
+        )
+        
     async def _handle_voice_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Process voice messages using Faster Whisper."""
+        chat_id = update.message.chat.id
+        telegram_id = str(update.effective_user.id)
+        chat_type = update.message.chat.type
+        username = update.effective_user.username
+        
+        start_time = time.time()
+        transcribed_text = None
+        
         try:
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
              
             # Download the voice message
             voice = await update.message.voice.get_file()
+            voice_duration = update.message.voice.duration
             
             # Create a temporary file to store the voice message
             with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as temp_file:
                 await voice.download_to_drive(temp_file.name)
                 
                 # Transcribe the voice message
-                segments, _ = self.whisper_model.transcribe(temp_file.name)
+                segments, info = self.whisper_model.transcribe(temp_file.name)
                 transcribed_text = " ".join([segment.text for segment in segments])
+                detected_language = info.language
                 
             # Clean up the temporary file
             os.unlink(temp_file.name)
@@ -75,36 +164,114 @@ class CustomMessageHandler:
             logger.info(f"Transcribed voice message: {transcribed_text}")
             
             # Process the transcribed text
-            response, keyboard = await self._handle_response(transcribed_text, update.message.chat.id, str(update.effective_user.id))
+            response, keyboard = await self._handle_response(transcribed_text, chat_id, telegram_id)
+            
+            # Calculate processing time
+            processing_time = (time.time() - start_time) * 1000  # Convert to milliseconds
+            
             await update.message.reply_text(
                 f"🎤 Transcribed: {transcribed_text}\n\n{response}",
                 reply_markup=keyboard
             )
             
+            # Log the voice interaction with all available data
+            conversation_state = None
+            if chat_id in user_states:
+                state = user_states[chat_id]
+                conversation_state = {
+                    "command": state.command_key,
+                    "step": state.current_step,
+                    "responses": state.responses
+                }
+            
+            self.log_service.log_interaction(
+                user_id=telegram_id,
+                username=username,
+                chat_id=chat_id,
+                chat_type=chat_type,
+                message_type="voice",
+                user_message=transcribed_text,
+                bot_response=response,
+                command_matched=user_states[chat_id].command_key if chat_id in user_states else None,
+                processing_time=processing_time,
+                is_in_conversation=chat_id in user_states,
+                conversation_state=conversation_state,
+                language=detected_language,
+                custom_data={
+                    "voice_duration": voice_duration,
+                    "transcription_info": {
+                        "language": detected_language,
+                        "language_probability": info.language_probability
+                    }
+                }
+            )
+            
         except Exception as e:
-            logger.error(f"Error processing voice message: {str(e)}")
+            error_message = f"Error processing voice message: {str(e)}"
+            logger.error(error_message)
             await update.message.reply_text(
                 "Sorry, I couldn't process your voice message. Please try again or send a text message."
             )
             
+            # Log the error
+            self.log_service.log_error(
+                error_type="voice_processing_error",
+                error_message=str(e),
+                user_id=telegram_id,
+                chat_id=chat_id,
+                context={
+                    "transcribed_text": transcribed_text,
+                    "chat_type": chat_type
+                }
+            )
+            
     async def _handle_response(self, text: str, chat_id: int, telegram_id: str) -> Tuple[str, Optional[ReplyKeyboardMarkup]]:
         """Process text responses with fuzzy matching for commands."""
+        start_time = time.time()
         processed_text = text.lower()
         
         # If user is in conversation, handle as before
         if chat_id in user_states:
-            return await self._handle_conversation_state(chat_id, processed_text, telegram_id)
+            response, keyboard = await self._handle_conversation_state(chat_id, processed_text, telegram_id)
+            return response, keyboard
             
-        # Try to find the best matching command using fuzzy matching
+        # Try to find the best matching command using a combination of semantic and fuzzy matching
         best_match = None
-        highest_ratio = 0
+        highest_score = 0
+        match_method = None
+        cleaned_text = self._clean_user_input(processed_text)
         
-        for command in self.commands.keys():
-            ratio = fuzz.ratio(processed_text, command)
-            # ratio = fuzz.token_set_ratio(processed_text, command) //TODO: add this instead of just ration
-            if ratio > highest_ratio and ratio >= 80:  
-                highest_ratio = ratio
-                best_match = command
+        # First try semantic matching with SentenceTransformer
+        text_embedding = self.transformer_model.encode(cleaned_text, convert_to_tensor=True)
+        
+        # Calculate semantic similarity score for each command
+        semantic_scores = {}
+        for emb, cmd in zip(self.command_embeddings, self.command_keys):
+            semantic_score = util.cos_sim(text_embedding, emb).item()
+            semantic_scores[cmd] = semantic_score
+            
+            # If the semantic score is very high, we can just use this
+            if semantic_score > 0.8:
+                highest_score = semantic_score
+                best_match = cmd
+                match_method = "semantic"
+                
+        # If we don't have a high confidence match, combine with fuzzy matching
+        if not best_match or highest_score < 0.8:
+            for command in self.commands.keys():
+                # Calculate a combined score (70% semantic + 30% fuzzy)
+                fuzzy_score = fuzz.ratio(processed_text, command) / 100.0  # Normalize to 0-1
+                semantic_score = semantic_scores.get(command, 0)
+                
+                combined_score = (0.7 * semantic_score) + (0.3 * fuzzy_score)
+                
+                if combined_score > highest_score and combined_score >= 0.65:  # Lower threshold for combined score
+                    highest_score = combined_score
+                    best_match = command
+                    match_method = "combined"
+                
+        # Calculate processing time for matching
+        matching_time = (time.time() - start_time) * 1000  # ms
                 
         if best_match:
             command_data = self.commands[best_match]
@@ -120,6 +287,20 @@ class CustomMessageHandler:
                 first_step = command_data["steps"][0]
                 keyboard = self._create_keyboard(first_step)
                 return first_step["bot"], keyboard
+
+        # Log the match attempt (even if unsuccessful)
+        self.log_service.log_interaction(
+            user_id=telegram_id,
+            chat_id=chat_id,
+            message_type="text",
+            user_message=text,
+            bot_response="I don't understand what you said.",
+            command_matched=best_match,
+            match_score=highest_score,
+            match_method=match_method,
+            processing_time=matching_time,
+            is_in_conversation=False
+        )
                 
         return "I don't understand what you said.", None
         

@@ -6,3 +6,9 @@ loguru
 python-dotenv
 faster-whisper
 ffmpeg-python
+sentence-transformers
+langdetect
+pandas
+matplotlib
+seaborn
+numpy
