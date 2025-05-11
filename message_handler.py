@@ -214,31 +214,32 @@ class CustomMessageHandler:
         # If user is in conversation, handle as before
         if chat_id in user_states:
             response, keyboard = await self._handle_conversation_state(chat_id, processed_text, telegram_id)
-            
-            # Get conversation state for logging
-            state = user_states[chat_id]
-            conversation_state = {
-                "command": state.command_key,
-                "step": state.current_step,
-                "responses": state.responses
-            }
+
+            # TODO: REMOVE THIS INTO THE ABOVE FUNCTION CUZ IT IS MAKING AN ERROR DUE TO DELEETD STATE
+            # # Get conversation state for logging
+            # state = user_states[chat_id]
+            # conversation_state = {
+            #     "command": state.command_key,
+            #     "step": state.current_step,
+            #     "responses": state.responses
+            # }
             
             # Log the interaction
-            self.log_service.log_interaction(
-                user_id=telegram_id,
-                username=username,
-                chat_id=chat_id,
-                chat_type=chat_type,
-                message_type=message_type,
-                user_message=text,
-                bot_response=response,
-                command_matched=state.command_key,
-                processing_time=(time.time() - start_time) * 1000,
-                is_in_conversation=True,
-                conversation_state=conversation_state,
-                language=detected_language,
-                custom_data=custom_data
-            )
+            # self.log_service.log_interaction(
+            #     user_id=telegram_id,
+            #     username=username,
+            #     chat_id=chat_id,
+            #     chat_type=chat_type,
+            #     message_type=message_type,
+            #     user_message=text,
+            #     bot_response=response,
+            #     command_matched=state.command_key,
+            #     processing_time=(time.time() - start_time) * 1000,
+            #     is_in_conversation=True,
+            #     conversation_state=conversation_state,
+            #     language=detected_language,
+            #     custom_data=custom_data
+            # )
             
             return response, keyboard
             
@@ -500,7 +501,7 @@ class CustomMessageHandler:
 
 # //TODO: update the check with hardcoded fields with an updatble  parmater from the commnad or  use the store_response from the commands
         # 3.3 Handle field updates (return to confirmation after update)
-        elif current_step["id"] in ["name", "email", "phone", "address", "company"] and hasattr(state, "_from_field_to_update") and state._from_field_to_update:
+        elif  hasattr(state, "_from_field_to_update") and state._from_field_to_update:
             state._from_field_to_update = False
             # Find confirmation step
             for i, step in enumerate(command_data["steps"]):

@@ -6,6 +6,10 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 from message_handler import CustomMessageHandler
 from state import user_states, ConversationState, load_commands, commands
 from auth_handler import AuthHandler
+import traceback
+import html
+import json
+from telegram.constants import ParseMode
 
 load_dotenv()
 TOKEN: Final = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -82,6 +86,30 @@ async def logout_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def error(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f'Update {update} caused error {context.error}')
+
+    # Prepare the traceback
+    tb_list = traceback.format_exception(None, context.error, context.error.__traceback__)
+    tb_string = "".join(tb_list)
+    
+    # Log the full traceback
+    print(f"Traceback: {tb_string}")
+
+        # For developers, send a message with the error details
+    # You might want to send this to a specific chat ID (e.g., your own)
+    # Make sure to escape HTML characters
+    if update and update.effective_chat:
+        message = (
+            f"An exception was raised while handling an update\n"
+            f"<pre>update = {html.escape(json.dumps(update.to_dict(), indent=2, ensure_ascii=False))}</pre>\n"
+            f"<pre>context.chat_data = {html.escape(str(context.chat_data))}</pre>\n"
+            f"<pre>context.user_data = {html.escape(str(context.user_data))}</pre>\n"
+            f"<pre>{html.escape(tb_string)}</pre>"
+        )
+        # You might want to send this to a developer chat ID
+        # For now, let's just print it to ensure no issues with sending messages
+        print(f"Error details for developer: {message}")
+        
+
 
 if __name__ == "__main__":
     print("Starting bot...")

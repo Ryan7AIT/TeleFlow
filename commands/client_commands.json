@@ -40,13 +40,11 @@
             },
             {
                 "id": "field_to_update",
-                "bot": "Which field would you like to update?\n1. Name\n2. Email\n3. Phone\n4. Address\n5. Company",
+                "bot": "Which field would you like to update?\n1. Designation\n2. Name\n3. Code",
                 "expect": [
                     "1",
                     "2",
-                    "3",
-                    "4",
-                    "5"
+                    "3"
                 ],
                 "goto": {
                     "1": "client_designation",

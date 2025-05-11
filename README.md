@@ -275,3 +275,45 @@ python main.py
 
 ### API Integration (Error Handling)
 - If an API request returns a 419 CSRF token mismatch, the bot will automatically log out the user and prompt them to /login again.
+
+## Conversation and State Management
+
+The bot is designed to handle multi-step conversations with users, allowing for complex interactions beyond simple one-off commands. Here's how conversation state is managed:
+
+1.  **`user_states` Dictionary**:
+    *   The primary mechanism for tracking active conversations is a dictionary named `user_states` (likely defined or managed in `state.py`).
+    *   The keys of this dictionary are `chat_id` (identifying the user/chat), and the values are instances of the `ConversationState` class.
+    *   This dictionary holds the current state of any ongoing conversation for each user.
+
+2.  **`ConversationState` Class**:
+    *   This class (defined in `state.py`) encapsulates all the information related to a user's current conversation. This includes:
+        *   The command being processed (e.g., "insert\_client").
+        *   The current step ID within that command's definition (e.g., "client\_designation", "confirmation").
+        *   User responses collected so far for the various steps.
+        *   Any other data relevant to the conversation flow.
+
+3.  **Initiating a Conversation**:
+    *   When a user issues a command that is defined as a "conversation" type in the JSON command files (e.g., `commands/client_commands.json`), a new `ConversationState` object is created and stored in `user_states` for that user's `chat_id`.
+    *   The bot then sends the message for the first step of the command.
+
+4.  **Processing User Responses**:
+    *   Subsequent messages from the user (that are not new commands) are treated as responses to the current step of the active conversation.
+    *   The `CustomMessageHandler` (in `message_handler.py`), specifically the `_handle_response` and `_handle_conversation_state` methods, retrieves the user's `ConversationState` from `user_states`.
+    *   It processes the user's input according to the current step's definition:
+        *   Stores the response if `store_response` is true.
+        *   Validates the input if `expect` options are defined.
+        *   Determines the next step based on the user's input and `goto` fields or by simply moving to the next step in the sequence.
+        *   Updates the `ConversationState` object with the new current step and any stored data.
+
+5.  **Navigating Steps**:
+    *   The conversation progresses from one step to another as defined in the command's JSON structure.
+    *   Steps can involve asking for information, offering choices (which might create reply keyboards), confirming information, or triggering API calls.
+
+6.  **Ending a Conversation**:
+    *   A conversation typically ends when:
+        *   All defined steps are completed, particularly after a step marked with `"is_final": true` is processed.
+        *   The user explicitly cancels the conversation (e.g., using a `/cancel` command if implemented, or a "cancel" option within a step).
+        *   The `/reset` command is used, which clears the user's state from `user_states`.
+    *   Once a conversation is deemed finished, the corresponding `ConversationState` object for that `chat_id` should be removed from the `user_states` dictionary to free up resources and allow the user to start new commands cleanly. Prematurely removing this state before a truly final step (like an API call) can lead to errors, as the bot will not find an active conversation when the user responds to an intermediate step (e.g., a confirmation prompt).
+
+This system allows the bot to remember where it is in a multi-part interaction with a user, collect necessary information over several messages, and act upon that information. The JSON command definitions provide the blueprint for how these conversations should flow.
